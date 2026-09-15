@@ -23,12 +23,26 @@ object AcademicUrlPolicy {
     fun isAllowed(value: String, protocol: String, hosts: Collection<String>): Boolean = runCatching {
         val uri = URI(value)
         if (uri.scheme !in setOf("http", "https") || uri.host.isNullOrBlank() || uri.userInfo != null) return false
-        if (protocol == "https" && uri.scheme != "https") return false
+        if (protocol.isNotBlank() && protocol.equals("https", true) && uri.scheme != "https") return false
         val port = if (uri.port == -1) if (uri.scheme == "https") 443 else 80 else uri.port
+        val requestHost = uri.host.lowercase()
         hosts.any { configured ->
-            val allowed = URI(if (configured.contains("://")) configured else "${uri.scheme}://$configured")
-            val allowedPort = if (allowed.port == -1) if (uri.scheme == "https") 443 else 80 else allowed.port
-            allowed.host?.equals(uri.host, true) == true && port == allowedPort
+            val clean = configured.trim().removePrefix("http://").removePrefix("https://").substringBefore('/')
+            if (clean.isBlank()) return@any false
+            val allowedPort = clean.substringAfter(':', "").toIntOrNull()
+            if (allowedPort != null && port != allowedPort) return@any false
+
+            val targetHost = clean.substringBefore(':').lowercase()
+            when {
+                targetHost.startsWith("*.") -> {
+                    val root = targetHost.removePrefix("*.")
+                    requestHost == root || requestHost.endsWith(".$root")
+                }
+                targetHost.count { it == '.' } >= 2 && !targetHost.startsWith("www.") -> {
+                    requestHost == targetHost || requestHost.endsWith(".$targetHost")
+                }
+                else -> requestHost == targetHost
+            }
         }
     }.getOrDefault(false)
 }

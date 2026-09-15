@@ -63,6 +63,7 @@ fun EditSchoolConfigDialog(
 
     // Advanced paths
     var showAdvanced by remember { mutableStateOf(false) }
+    var loginPagePath by remember { mutableStateOf(school.loginPagePath) }
     var studentInfoPath by remember { mutableStateOf(school.studentInfoPath) }
     var courseIndexPath by remember { mutableStateOf(school.courseIndexPath) }
     var courseListPath by remember { mutableStateOf(school.courseListPath) }
@@ -100,6 +101,7 @@ fun EditSchoolConfigDialog(
                         this.courseGnmkdm = courseGnmkdm
                         this.gradeGnmkdm = gradeGnmkdm
                         this.scheduleGnmkdm = scheduleGnmkdm
+                        this.loginPagePath = loginPagePath
                         this.studentInfoPath = studentInfoPath
                         this.courseIndexPath = courseIndexPath
                         this.courseListPath = courseListPath
@@ -236,6 +238,12 @@ fun EditSchoolConfigDialog(
                 SchoolFormField(label = "额外允许访问的学校域名", value = allowedHosts, onValueChange = { allowedHosts = it }, helper = "统一认证域名可填在这里，多个域名以逗号分隔")
                 if (supportsZfModulePaths) {
                     SchoolFormSectionTitle("URL 路径配置")
+                    SchoolFormField(
+                        label = "登录页面网址/路径",
+                        value = loginPagePath,
+                        onValueChange = { loginPagePath = it },
+                        helper = "支持完整网页链接或相对路径，默认 /xtgl/login_slogin.html"
+                    )
                     SchoolFormField(
                         label = "学生信息验证",
                         value = studentInfoPath,

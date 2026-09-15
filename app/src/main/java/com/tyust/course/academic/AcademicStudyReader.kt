@@ -25,7 +25,15 @@ internal class AcademicStudyReader(
 
     override suspend fun catalog(): AcademicStudyCatalog = session.withProtocolLock {
         val page = when (school.academicType()) {
-            AcademicSystem.ZF -> checked(http.get(http.appUrl("kbcx/xskbcx_cxXsKb.html?gnmkdm=${school.scheduleGnmkdm}")))
+            AcademicSystem.ZF -> {
+                val indexUrl = if (school.studentInfoPath.contains("xskbcx_cxXskbcxIndex")) {
+                    http.appUrl(school.studentInfoPath.trimStart('/')) + if (school.studentInfoPath.contains("?")) "" else "?gnmkdm=${school.scheduleGnmkdm}&layout=default"
+                } else {
+                    http.appUrl("kbcx/xskbcx_cxXskbcxIndex.html?gnmkdm=${school.scheduleGnmkdm}&layout=default")
+                }
+                val resp = runCatching { checked(http.get(indexUrl)) }.getOrNull()
+                resp ?: checked(http.get(http.appUrl("kbcx/xskbcx_cxXsKb.html?gnmkdm=${school.scheduleGnmkdm}")))
+            }
             AcademicSystem.ZF_OLD -> studyPage(Page.SCHEDULE)
             else -> qzSchedulePage()
         }

@@ -91,6 +91,24 @@ public class UserManager {
         hebic.academicSystem = "auto";
         hebic.basePath = "";
         defaultSchools.add(hebic);
+        // 上海财经大学浙江学院：CAS 统一认证 -> 直接重定向到根路径正方教务个人课表
+        SchoolConfig shufezj = new SchoolConfig("shufe-zj", "上海财经大学浙江学院", "jwxt.shufe-zj.edu.cn", "https");
+        shufezj.academicSystem = "zf";
+        shufezj.basePath = "";
+        shufezj.scheduleGnmkdm = "N2151";
+        shufezj.studentInfoPath = "/kbcx/xskbcx_cxXskbcxIndex.html";
+        shufezj.schedulePath = "/kbcx/xskbcx_cxXsKb.html";
+        shufezj.courseIndexPath = "/xsxk/zzxkyzb_cxZzxkYzbIndex.html";
+        shufezj.gradesPath = "/cjcx/cjcx_cxDgXscj.html";
+        shufezj.loginPagePath = "https://cass.shufe-zj.edu.cn/cas/login?service=http%3A%2F%2Fjwxt.shufe-zj.edu.cn%2Fkbcx%2Fxskbcx_cxXskbcxIndex.html%3Fgnmkdm%3DN2151";
+        shufezj.allowedAcademicHosts.add("jwxt.shufe-zj.edu.cn");
+        shufezj.allowedAcademicHosts.add("cass.shufe-zj.edu.cn");
+        shufezj.allowedAcademicHosts.add("portal.shufe-zj.edu.cn");
+        shufezj.allowedAcademicHosts.add("webvpn.shufe-zj.edu.cn");
+        shufezj.allowedAcademicHosts.add("ty.shufe-zj.edu.cn");
+        shufezj.allowedAcademicHosts.add("shufe-zj.edu.cn");
+        shufezj.allowedAcademicHosts.add("*.shufe-zj.edu.cn");
+        defaultSchools.add(shufezj);
         // 重要修复：这里不要直接赋值 currentSchool，等待 init() 时从 SharedPreferences 加载
     }
 
@@ -218,6 +236,18 @@ public class UserManager {
                 JSONObject obj = arr.getJSONObject(i);
                 SchoolConfig school = SchoolConfig.fromJson(obj);
                 if (school != null && !school.domain.isEmpty()) {
+                    if ("shufe-zj".equals(school.id)) {
+                        school.loginPagePath = "https://cass.shufe-zj.edu.cn/cas/login?service=http%3A%2F%2Fjwxt.shufe-zj.edu.cn%2Fkbcx%2Fxskbcx_cxXskbcxIndex.html%3Fgnmkdm%3DN2151";
+                        school.studentInfoPath = "/kbcx/xskbcx_cxXskbcxIndex.html";
+                        school.schedulePath = "/kbcx/xskbcx_cxXsKb.html";
+                        school.scheduleGnmkdm = "N2151";
+                        school.basePath = "";
+                        school.academicSystem = "zf";
+                        if (!school.allowedAcademicHosts.contains("*.shufe-zj.edu.cn")) school.allowedAcademicHosts.add("*.shufe-zj.edu.cn");
+                        if (!school.allowedAcademicHosts.contains("ty.shufe-zj.edu.cn")) school.allowedAcademicHosts.add("ty.shufe-zj.edu.cn");
+                        if (!school.allowedAcademicHosts.contains("cass.shufe-zj.edu.cn")) school.allowedAcademicHosts.add("cass.shufe-zj.edu.cn");
+                        if (!school.allowedAcademicHosts.contains("jwxt.shufe-zj.edu.cn")) school.allowedAcademicHosts.add("jwxt.shufe-zj.edu.cn");
+                    }
                     customSchools.add(school);
                     Log.d(TAG, "加载自定义学校: id=" + school.id + ", name=" + school.name);
                 }

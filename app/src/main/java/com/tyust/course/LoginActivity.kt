@@ -333,7 +333,12 @@ class LoginActivity : ComponentActivity() {
         val academicGateway = activePasswordLoginGateway as? AcademicPasswordLoginGateway
         if (AcademicGatewayFactory.supports(currentSchool)) {
             val username = pendingPasswordUsername.ifBlank {
-                runCatching { android.net.Uri.parse(academicWebPageUrl).getQueryParameter("xh") }.getOrNull().orEmpty()
+                runCatching {
+                    val uri = android.net.Uri.parse(academicWebPageUrl)
+                    uri.getQueryParameter("xh")
+                        ?: uri.getQueryParameter("su")
+                        ?: uri.getQueryParameter("yhm")
+                }.getOrNull().orEmpty()
             }
             val key = validationKey
             validationJob = lifecycleScope.launch {
@@ -341,6 +346,7 @@ class LoginActivity : ComponentActivity() {
                     if (currentSchool.academicSystem == "auto" && AcademicGatewayFactory.detect(currentSchool, key) == null)
                         throw IllegalStateException("无法识别教务系统，请在学校配置中手动选择")
                     AcademicGatewayFactory.importCookie(currentSchool, key, cookieStr, username = username)
+                    CourseApiClient.getInstance().setCookie(currentSchool.baseUrl, cookieStr.trim(), key)
                     AcademicGatewayFactory.create(currentSchool, key).validateSession()
                 } }
                 if (generation != academicValidationGeneration || selectedLoginSchool?.id != currentSchool.id) return@launch
@@ -350,15 +356,10 @@ class LoginActivity : ComponentActivity() {
                         errorMessage = identity.message.ifBlank { "未能验证登录，请在教务网页完成登录后重试" }
                         discardPendingPasswordLogin()
                     } else {
-                        val id = identity.studentId.ifBlank { academicGateway?.studentId.orEmpty() }.ifBlank { username }
-                        if (id.isBlank()) {
-                            isLoading = false
-                            errorMessage = "已登录，但未识别到学号，请使用密码登录或重新打开教务网页"
-                            discardPendingPasswordLogin()
-                        } else {
-                            UserManager.getInstance().updateSchoolConfig(currentSchool)
-                            finishAcademicLogin(currentSchool, cookieStr, identity.studentName.ifBlank { academicGateway?.studentName.orEmpty() }, id)
-                        }
+                        val id = identity.studentId.ifBlank { academicGateway?.studentId.orEmpty() }.ifBlank { username }.ifBlank { "已登录学生" }
+                        UserManager.getInstance().updateSchoolConfig(currentSchool)
+                        CourseApiClient.getInstance().setCookie(currentSchool.baseUrl, cookieStr.trim())
+                        finishAcademicLogin(currentSchool, cookieStr, identity.studentName.ifBlank { academicGateway?.studentName.orEmpty() }, id)
                     }
                 }.onFailure {
                     if (it is kotlinx.coroutines.CancellationException) throw it

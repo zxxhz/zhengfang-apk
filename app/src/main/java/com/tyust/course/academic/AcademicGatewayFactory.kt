@@ -71,8 +71,8 @@ object AcademicGatewayFactory {
             val separator = part.indexOf('=')
             if (separator <= 0) return@mapNotNull null
             runCatching { Cookie.Builder().name(part.substring(0, separator).trim())
-                .value(part.substring(separator + 1).trim()).hostOnlyDomain(url.host).path(url.encodedPath)
-                .apply { if (url.isHttps) secure() }.build() }.getOrNull()
+                .value(part.substring(separator + 1).trim()).hostOnlyDomain(url.host).path("/")
+                .build() }.getOrNull()
         }
         session.cookies.saveFromResponse(url, parsed)
     }
@@ -81,13 +81,17 @@ object AcademicGatewayFactory {
         (school.id + "::" + username.trim()).replace(Regex("[^A-Za-z0-9_.-]"), "_")
 
     fun loginUrl(school: SchoolConfig): String {
+        val configured = school.loginPagePath?.trim().orEmpty()
+        if (configured.startsWith("http://", ignoreCase = true) || configured.startsWith("https://", ignoreCase = true)) {
+            return configured
+        }
         val path = when (AcademicSystem.fromId(school.academicSystem)) {
-            AcademicSystem.ZF -> "xtgl/login_slogin.html"
-            AcademicSystem.ZF_OLD -> "default2.aspx"
-            AcademicSystem.QZ -> "framework/xsMainV.htmlx"
+            AcademicSystem.ZF -> if (configured.isNotBlank() && configured != "/xtgl/login_slogin.html") configured.trimStart('/') else "xtgl/login_slogin.html"
+            AcademicSystem.ZF_OLD -> if (configured.isNotBlank() && configured != "/xtgl/login_slogin.html") configured.trimStart('/') else "default2.aspx"
+            AcademicSystem.QZ -> if (configured.isNotBlank() && configured != "/xtgl/login_slogin.html") configured.trimStart('/') else "framework/xsMainV.htmlx"
             // LoginToXk is often a POST-only handler; the root serves the captcha form.
-            AcademicSystem.QZ_OLD -> ""
-            else -> ""
+            AcademicSystem.QZ_OLD -> if (configured.isNotBlank() && configured != "/xtgl/login_slogin.html") configured.trimStart('/') else ""
+            else -> if (configured.isNotBlank()) configured.trimStart('/') else ""
         }
         return school.fullBasePath.trimEnd('/') + "/" + path
     }

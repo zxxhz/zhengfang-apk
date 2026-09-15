@@ -61,6 +61,7 @@ class AcademicWebViewActivity : ComponentActivity() {
     private var allowedHosts: Set<String> = emptySet()
     private var loadingProgress by mutableFloatStateOf(0f)
     private var pageError by mutableStateOf<String?>(null)
+    private var hasAutoFinished = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -137,16 +138,36 @@ class AcademicWebViewActivity : ComponentActivity() {
         settings.javaScriptEnabled = true
         com.tyust.course.manager.AppThemeCoordinator.preserveWebContentColors(settings)
         settings.domStorageEnabled = true
+        settings.useWideViewPort = true
+        settings.loadWithOverviewMode = true
+        settings.setSupportZoom(true)
+        settings.builtInZoomControls = true
+        settings.displayZoomControls = false
+        settings.userAgentString = "Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
         settings.allowFileAccess = false
         settings.allowContentAccess = false
-        settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+        settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+        settings.setSupportMultipleWindows(true)
+        settings.javaScriptCanOpenWindowsAutomatically = true
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
-            setAcceptThirdPartyCookies(webViewInstance, false)
+            setAcceptThirdPartyCookies(webViewInstance, true)
         }
         webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView, newProgress: Int) {
                 loadingProgress = newProgress / 100f
+            }
+
+            override fun onCreateWindow(
+                view: WebView?,
+                isDialog: Boolean,
+                isUserGesture: Boolean,
+                resultMsg: android.os.Message?
+            ): Boolean {
+                val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
+                transport.webView = view
+                resultMsg.sendToTarget()
+                return true
             }
         }
         webViewClient = object : WebViewClient() {
@@ -156,6 +177,8 @@ class AcademicWebViewActivity : ComponentActivity() {
             }
             override fun onPageFinished(view: WebView, url: String) {
                 loadingProgress = 1f
+                CookieManager.getInstance().flush()
+                checkAutoFinish(url)
             }
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                 if (request.isForMainFrame) {
@@ -164,12 +187,12 @@ class AcademicWebViewActivity : ComponentActivity() {
                 }
             }
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-                if (request.url.scheme in setOf("data", "blob", "about") || isAllowed(request.url)) return null
-                return WebResourceResponse("text/plain", "UTF-8", 403, "Blocked", emptyMap(), java.io.ByteArrayInputStream(ByteArray(0)))
+                // 不阻断页面内的图片、JS、CSS、字体等资源加载，避免CAS登录和跳转脚本被破坏
+                return null
             }
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 if (!isAllowed(request.url)) {
-                    Toast.makeText(this@AcademicWebViewActivity, "已阻止访问未授权域名", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@AcademicWebViewActivity, "已阻止访问未授权域名: ${request.url.host}", Toast.LENGTH_SHORT).show()
                     return true
                 }
                 return false
@@ -179,7 +202,7 @@ class AcademicWebViewActivity : ComponentActivity() {
             override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean {
                 val uri = Uri.parse(url)
                 if (!isAllowed(uri)) {
-                    Toast.makeText(this@AcademicWebViewActivity, "已阻止访问未授权域名", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@AcademicWebViewActivity, "已阻止访问未授权域名: ${uri.host}", Toast.LENGTH_SHORT).show()
                     return true
                 }
                 return false
@@ -187,14 +210,69 @@ class AcademicWebViewActivity : ComponentActivity() {
         }
     }
 
+    private fun checkAutoFinish(url: String) {
+        if (hasAutoFinished) return
+        val cookie = getCombinedCookie()
+        val isTargetPage = url.contains("kbcx") || url.contains("xskbcx") || url.contains("jwxt") ||
+                (cookieUrl.isNotBlank() && Uri.parse(url).host == Uri.parse(cookieUrl).host)
+        val isNotLogin = !url.contains("/cas/") && !url.contains("/login")
+        val hasJSession = cookie.contains("JSESSIONID=", ignoreCase = true)
+        if (isTargetPage && isNotLogin && hasJSession) {
+            hasAutoFinished = true
+            Toast.makeText(this@AcademicWebViewActivity, "登录成功，正在进入...", Toast.LENGTH_SHORT).show()
+            webView?.postDelayed({ finishWithCookie() }, 500)
+        }
+    }
+
+    private fun getCombinedCookie(): String {
+        val currentUrl = webView?.url.orEmpty()
+        val cookieManager = CookieManager.getInstance()
+        val cookieSet = LinkedHashSet<String>()
+        val urlsToTry = mutableListOf<String>()
+        if (cookieUrl.isNotBlank()) urlsToTry.add(cookieUrl)
+        if (currentUrl.isNotBlank()) urlsToTry.add(currentUrl)
+        runCatching {
+            val uri = Uri.parse(currentUrl)
+            uri.host?.let { host ->
+                urlsToTry.add("https://$host/")
+                urlsToTry.add("http://$host/")
+                val parts = host.split(".")
+                if (parts.size >= 2) {
+                    val rootDomain = parts.takeLast(2).joinToString(".")
+                    urlsToTry.add("https://$rootDomain/")
+                    urlsToTry.add("https://.$rootDomain/")
+                }
+            }
+        }
+        for (u in urlsToTry) {
+            cookieManager.getCookie(u)?.split(';')?.forEach { part ->
+                val trimmed = part.trim()
+                if (trimmed.contains('=')) {
+                    cookieSet.add(trimmed)
+                }
+            }
+        }
+        return cookieSet.joinToString("; ")
+    }
+
     private fun finishWithCookie() {
-        val cookie = CookieManager.getInstance().getCookie(cookieUrl).orEmpty().trim()
+        val currentUrl = webView?.url.orEmpty()
+        val cookie = getCombinedCookie()
         if (cookie.isBlank()) {
             Toast.makeText(this, "请先在网页中登录教务账号", Toast.LENGTH_SHORT).show()
             return
         }
+        val isStillOnLogin = currentUrl.contains("/cas/") || currentUrl.contains("/login")
+        val hasSession = cookie.contains("JSESSIONID=", ignoreCase = true) ||
+                cookie.contains("session", ignoreCase = true) ||
+                cookie.contains("token", ignoreCase = true) ||
+                cookie.contains("ticket", ignoreCase = true)
+        if (isStillOnLogin && !hasSession) {
+            Toast.makeText(this, "当前仍在统一认证/登录页面，请先在网页中完成登录并等待跳转到教务系统", Toast.LENGTH_LONG).show()
+            return
+        }
         CookieManager.getInstance().flush()
-        setResult(Activity.RESULT_OK, Intent().putExtra(EXTRA_COOKIE_RESULT, cookie).putExtra(EXTRA_PAGE_URL, webView?.url))
+        setResult(Activity.RESULT_OK, Intent().putExtra(EXTRA_COOKIE_RESULT, cookie).putExtra(EXTRA_PAGE_URL, currentUrl.ifBlank { webView?.url }))
         finish()
     }
 
@@ -204,12 +282,12 @@ class AcademicWebViewActivity : ComponentActivity() {
     }
 
     private fun isAllowed(uri: Uri): Boolean {
-        return AcademicUrlPolicy.isAllowed(uri.toString(), Uri.parse(startUrl).scheme.orEmpty(), allowedHosts)
+        return AcademicUrlPolicy.isAllowed(uri.toString(), "", allowedHosts)
     }
 
     private fun normalizeHost(raw: String): String {
         val value = raw.trim().removePrefix("http://").removePrefix("https://").substringBefore('/')
-        return value.lowercase().trim('.')
+        return value.lowercase().removeSuffix(".")
     }
 
     override fun onDestroy() {

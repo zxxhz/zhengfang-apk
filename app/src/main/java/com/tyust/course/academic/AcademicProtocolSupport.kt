@@ -122,22 +122,44 @@ internal abstract class BaseAcademicAdapter(
     override fun cookieHeader(): String = session.cookieHeader()
     internal suspend fun <T> inSession(block: suspend () -> T): T = serial(block)
     override suspend fun validateSession(): LoginResult = serial {
+        val configuredInfo = school.studentInfoPath.trim().removePrefix("/")
+        val zfPath = if (configuredInfo.isNotBlank() && !configuredInfo.startsWith("xtgl/index_cxYhxxIndex.html")) {
+            val gnmk = school.scheduleGnmkdm.ifBlank { "N2151" }
+            if (configuredInfo.contains("?")) configuredInfo else "$configuredInfo?gnmkdm=$gnmk&layout=default"
+        } else {
+            "xtgl/index_cxYhxxIndex.html?gnmkdm=index"
+        }
         val path = when (system) {
-            AcademicSystem.ZF -> "xtgl/index_cxYhxxIndex.html?gnmkdm=index"
+            AcademicSystem.ZF -> zfPath
             AcademicSystem.ZF_OLD -> "xs_main.aspx?xh=${java.net.URLEncoder.encode(session.username, "UTF-8")}"
             AcademicSystem.QZ -> "framework/xsMainV_new.htmlx?t1=1"
             else -> "framework/xsMain.jsp"
         }
-        val response = transport.get(transport.appUrl(path))
-        if (AcademicHtml.isLoginPage(response.text) || response.code !in 200..299) return@serial LoginResult(AcademicStatus.SESSION_EXPIRED)
+        val response = runCatching { transport.get(transport.appUrl(path)) }.getOrNull()
+        if (response == null || AcademicHtml.isLoginPage(response.text) || response.code !in 200..299) {
+            if (system == AcademicSystem.ZF) {
+                val gnmkdm = school.scheduleGnmkdm.ifBlank { "N2151" }
+                val schedPath = "kbcx/xskbcx_cxXskbcxIndex.html?gnmkdm=$gnmkdm&layout=default"
+                val schedResp = runCatching { transport.get(transport.appUrl(schedPath)) }.getOrNull()
+                if (schedResp != null && !AcademicHtml.isLoginPage(schedResp.text) && schedResp.code in 200..299) {
+                    val id2 = parseName(org.jsoup.Jsoup.parse(schedResp.text, schedResp.url))
+                    val studentId = id2.second.ifBlank { session.username }
+                    val studentName = id2.first.ifBlank { "同学" }
+                    if (studentId.isNotBlank()) session.username = studentId
+                    return@serial LoginResult(AcademicStatus.SUCCESS, studentName, studentId)
+                }
+            }
+            return@serial LoginResult(AcademicStatus.SESSION_EXPIRED)
+        }
         var identity = parseName(org.jsoup.Jsoup.parse(response.text, response.url))
         if (system == AcademicSystem.ZF && identity.second.isBlank()) identity = zfMenuIdentityFallback(identity)
         val authenticated = identity.first.isNotBlank() || identity.second.isNotBlank() ||
-            listOf("xsxk.aspx", "xklc_list", "退出登录", "学期理论课表", "选课结果").any(response.text::contains)
+            listOf("xsxk.aspx", "xklc_list", "退出登录", "学期理论课表", "选课结果", "课表查询", "个人课表", "教学周").any(response.text::contains)
         if (!authenticated) return@serial LoginResult(AcademicStatus.SESSION_EXPIRED, message = "无法验证教务登录状态")
         val studentId = identity.second.ifBlank { session.username }
+        val studentName = identity.first.ifBlank { "同学" }
         if (studentId.isNotBlank()) session.username = studentId
-        LoginResult(AcademicStatus.SUCCESS, identity.first, studentId)
+        LoginResult(AcademicStatus.SUCCESS, studentName, studentId)
     }
 
     /**
@@ -202,16 +224,20 @@ internal fun parseName(document: Document): Pair<String, String> {
         label.text().replace(" ", "").trimEnd(':', '：') to
             label.nextElementSibling()?.takeIf { it.hasClass("middletopdwxxcont") }?.text().orEmpty()
     }
-    val name = document.select("input[name=xm], .media-heading, [name=studentName], #xhxm, .user-name, #studentName")
+    val name = document.select("input[name=xm], .media-heading, [name=studentName], #xhxm, .user-name, #studentName, .name, span[name=xm]")
         .firstOrNull()?.let { element ->
             val raw = element.attr("value").ifBlank { element.text() }
             // input 的 value 是纯姓名，不做角色后缀剥离；文本节点（media-heading 等）可能带"学生/教师"标签
             cleanIdentityText(raw, stripRoleSuffix = element.tagName() != "input")
         }.orEmpty()
         .ifBlank { profileFields["学生姓名"].orEmpty() }
-    val id = document.select("input[name=xh], input[name=studentId], #studentId, #sessionUserKey")
+    val id = document.select("input[name=xh], input[name=studentId], #studentId, #sessionUserKey, input[name=su], #su, [name=yhm], #userAccount, span[name=xh]")
         .firstOrNull()?.let { it.attr("value").ifBlank { it.text() } }?.trim().orEmpty()
         .ifBlank { profileFields["学号"].orEmpty() }
+        .ifBlank {
+            // 从页面文本或URL参数匹配 8-12 位学号
+            Regex("""(?:su|xh|yhm|学号)[:=\s]*([0-9]{8,12})""").find(document.html())?.groupValues?.get(1).orEmpty()
+        }
     return name.trim() to id.trim()
 }
 
