@@ -401,10 +401,7 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
         val useGlass = isBackdropSupported()
         // debug 平铺水印的开关。**它绝不能进任何 backdrop 捕获层**，见文件末尾
         // debugPiracyWatermark 的注释——落在采样层里会让 debug 包的折射永远看起来正常。
-        val showPiracyTiles = (
-            LocalContext.current.applicationInfo.flags and
-                ApplicationInfo.FLAG_DEBUGGABLE
-            ) != 0 && !BuildConfig.UI_PREVIEW
+        val showPiracyTiles = false
         val tokenExpiredNotice = if (isTokenExpired) {
             FloatingNotice(
                 message = "需要重新登录",
@@ -739,74 +736,8 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
 
 @Composable
 private fun BoxScope.AppBuildWatermarks() {
-    Text(
-        text = "开源版 · 请勿商用",
-        modifier = Modifier
-            .align(Alignment.BottomEnd)
-            .padding(end = 12.dp, bottom = 8.dp),
-        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
-        fontSize = 10.sp,
-        fontWeight = FontWeight.Medium
-    )
-    // debug 的平铺水印不在这里画：这一层仍然在 navBarBackdrop 捕获层内部，
-    // 底栏与弹窗会把它采样进去。它画在外层 Box 的最后一个孩子里，见那处注释。
 }
 
-/** 平铺水印避开底栏区域的底部内缩。原先由外层 Box 的 bottom padding 承担。 */
-private val PiracyWatermarkBottomInset = 88.dp
+private fun Modifier.debugPiracyWatermark(enabled: Boolean): Modifier = this
 
-/**
- * debug 防倒卖水印缓存为 Picture；每次重绘只回放一次绘制记录。
- *
- * ## 它为什么绝对不能进 backdrop 捕获层
- *
- * 这 35 段 −28° 的红色斜排文字是一张**高对比标靶**。它曾经挂在壁纸 Canvas 的
- * `.layerBackdrop(wallpaperBackdrop)` 之后，于是落在被采样的图层里面：
- * 玻璃一折射它，笔画立刻弯得清清楚楚——**debug 包因此永远显得折射正常**。
- * 而 release 不画它，玻璃只能去折射「底色 + 几个大半径径向渐变」那种极低频的壁纸，
- * 位移一片均匀颜色采回来还是同一个颜色，于是全 App 看起来只剩一层扁平磨砂。
- *
- * 「debug 正常 / release 不正常」这个现象的全部来源就是这一层，两个包的玻璃管线完全一致。
- * 现在它画在所有捕获层之外、所有内容之上，debug 与 release 的观感因此等价——
- * 在 debug 包上看到的就是用户装 release 会看到的。
- *
- * 折射的验收标靶改由壁纸自己的微纹理承担（见 `WallpaperRenderer.drawWallpaperMicroTexture`），
- * 那一层两个构建都有。
- */
-private fun Modifier.debugPiracyWatermark(enabled: Boolean): Modifier {
-    if (!enabled) return this
-    return drawWithCache {
-        val picture = Picture()
-        val recordingCanvas = picture.beginRecording(
-            size.width.roundToInt().coerceAtLeast(1),
-            size.height.roundToInt().coerceAtLeast(1)
-        )
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            textSize = 54f
-            color = android.graphics.Color.argb(64, 199, 58, 47)
-            textAlign = Paint.Align.CENTER
-        }
-        val centerX = size.width / 2f
-        val centerY = (size.height - PiracyWatermarkBottomInset.toPx()) / 2f
-        recordingCanvas.save()
-        recordingCanvas.rotate(-28f, centerX, centerY)
-        for (i in -2..2) {
-            for (j in -3..3) {
-                recordingCanvas.drawText(
-                    "开源版 / 严禁倒卖",
-                    centerX + (i * 560f),
-                    centerY + (j * 620f),
-                    paint
-                )
-            }
-        }
-        recordingCanvas.restore()
-        picture.endRecording()
-
-        onDrawWithContent {
-            drawContent()
-            drawContext.canvas.nativeCanvas.drawPicture(picture)
-        }
-    }
-}
 
