@@ -76,7 +76,7 @@ class AcademicWebViewActivity : ComponentActivity() {
         cookieUrl = intent.getStringExtra(EXTRA_COOKIE_URL).orEmpty().ifBlank { startUrl }
         val keyword = intent.getStringExtra(EXTRA_SEARCH_KEYWORD).orEmpty()
         searchUrl = WebLoginNavigation.searchUrl(keyword.ifBlank { "教务系统 登录" })
-        val initialUrl = if (keyword.isNotBlank()) searchUrl else startUrl
+        val initialUrl = if (startUrl.isNotBlank()) startUrl else searchUrl
         currentUrl = initialUrl
         allowedHosts = (intent.getStringArrayListExtra(EXTRA_ALLOWED_HOSTS).orEmpty())
             .map { normalizeHost(it) }
@@ -206,6 +206,9 @@ class AcademicWebViewActivity : ComponentActivity() {
             override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
                 if (request.isForMainFrame) pageError = "网页返回 HTTP ${response.statusCode}，可修改网址或搜索学校入口"
             }
+            override fun onReceivedSslError(view: WebView, handler: android.webkit.SslErrorHandler, error: android.net.http.SslError) {
+                handler.proceed()
+            }
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                 if (request.url.scheme in setOf("data", "blob", "about") || WebLoginNavigation.isWebUrl(request.url.toString())) return null
                 return null
@@ -232,6 +235,14 @@ class AcademicWebViewActivity : ComponentActivity() {
             hasAutoFinished = true
             Toast.makeText(this@AcademicWebViewActivity, "登录成功，正在进入...", Toast.LENGTH_SHORT).show()
             webView?.postDelayed({ finishWithCookie() }, 500)
+        } else if (url.contains("portal", ignoreCase = true) && !url.contains("/login", ignoreCase = true) && startUrl.isNotBlank()) {
+            // 用户在门户页面（可能已单点登录），自动跳转教务入口
+            webView?.postDelayed({
+                if (currentUrl.contains("portal", ignoreCase = true)) {
+                    Toast.makeText(this@AcademicWebViewActivity, "已登录统一门户，正在跳转教务系统...", Toast.LENGTH_SHORT).show()
+                    webView?.loadUrl(startUrl)
+                }
+            }, 600)
         }
     }
 
@@ -268,6 +279,11 @@ class AcademicWebViewActivity : ComponentActivity() {
 
     private fun finishWithCookie() {
         val currentUrl = webView?.url.orEmpty()
+        if (currentUrl.contains("portal", ignoreCase = true) && startUrl.isNotBlank()) {
+            Toast.makeText(this, "当前在学校门户，正在前往教务系统...", Toast.LENGTH_SHORT).show()
+            webView?.loadUrl(startUrl)
+            return
+        }
         val cookie = getCombinedCookie()
         if (cookie.isBlank()) {
             Toast.makeText(this, "请先登录并进入 ${Uri.parse(cookieUrl).host} 的教务主页", Toast.LENGTH_LONG).show()
