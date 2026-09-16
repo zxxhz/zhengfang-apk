@@ -139,6 +139,8 @@ import com.tyust.course.ui.system.SystemPrimaryButton
 import com.tyust.course.ui.system.SystemSecondaryButton
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
+import com.tyust.course.manager.StartupPage
+import com.tyust.course.manager.StartupPagePreferences
 import com.tyust.course.ui.system.GlassRecipe
 import com.tyust.course.ui.system.glass.drawBlurred
 
@@ -219,16 +221,21 @@ class MainActivity : FragmentActivity() {
 }
 
 sealed class BottomNavItem(
-    val route: String,
-    val symbol: AppSymbolSpec,
-    val label: String
+    val page: StartupPage,
+    val symbol: AppSymbolSpec
 ) {
+    val route: String get() = page.route
+    val label: String get() = page.label
     val icon: ImageVector get() = symbol.outline
-    object Courses : BottomNavItem("courses", AppSymbolSpec.Courses, "课程")
-    object Schedule : BottomNavItem("schedule", AppSymbolSpec.Schedule, "课表")
-    object Grab : BottomNavItem("grab", AppSymbolSpec.Grab, "抢课")
-    object Grades : BottomNavItem("grades", AppSymbolSpec.Grades, "成绩")
-    object Settings : BottomNavItem("settings", AppSymbolSpec.Settings, "设置")
+    object Courses : BottomNavItem(StartupPage.Courses, AppSymbolSpec.Courses)
+    object Schedule : BottomNavItem(StartupPage.Schedule, AppSymbolSpec.Schedule)
+    object Grab : BottomNavItem(StartupPage.Grab, AppSymbolSpec.Grab)
+    object Grades : BottomNavItem(StartupPage.Grades, AppSymbolSpec.Grades)
+    object Settings : BottomNavItem(StartupPage.Settings, AppSymbolSpec.Settings)
+
+    companion object {
+        val entries: List<BottomNavItem> get() = listOf(Courses, Schedule, Grab, Grades, Settings)
+    }
 }
 
 @Composable
@@ -237,6 +244,8 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
     val appWallpaper = com.tyust.course.ui.theme.rememberAppWallpaperStyle()
     val isDemoMode = remember { UserManager.getInstance().isDemoMode }
     val prefs = remember { context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE) }
+    val startupPagePreferences = remember(context) { StartupPagePreferences.from(context) }
+    val items = remember { BottomNavItem.entries }
     
     val hasStarred = prefs.getBoolean("has_starred", false)
     val dismissCount = prefs.getInt("star_dismiss_count", 0)
@@ -247,10 +256,23 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
     val sessionStore = UserManager.getInstance().sessionState
     val session by sessionStore.state.collectAsState()
     val currentAccountStorageKey = session.token.accountStorageKey
+    val surveyModel: com.tyust.course.survey.SurveyViewModel = viewModel()
+    val surveyRepository = surveyModel.forAccount(currentAccountStorageKey, UserManager.getInstance().currentSchool?.baseUrl)
+    val surveyFeed by surveyRepository.state.collectAsState()
+    val surveyVisit by com.tyust.course.survey.SurveyVisitTracker.visit.collectAsState()
+    val surveyUsagePreferences by com.tyust.course.usage.UsageStatsManager.preferences.collectAsState()
+    var showSurveyCenter by rememberSaveable(currentAccountStorageKey) { mutableStateOf(false) }
+    var initialSurveyId by rememberSaveable(currentAccountStorageKey) { mutableStateOf<String?>(null) }
     val accessibility = rememberGlassAccessibilityMode()
     val pageDataViewModel: PageDataViewModel = viewModel()
     val pageData = remember(currentAccountStorageKey) { pageDataViewModel.forAccount(currentAccountStorageKey) }
-    var selectedTab by remember(pageData) { pageData.state("navigation.tab") { 0 } }
+    // Resolve before creating the motion state so the first frame is already on the chosen page.
+    var selectedTab by remember(pageData) {
+        pageData.state("navigation.tab") {
+            val startupPage = startupPagePreferences.read()
+            items.indexOfFirst { it.page == startupPage }.coerceAtLeast(0)
+        }
+    }
     val navigationMotion = com.tyust.course.ui.theme.rememberNavigationMotionState(selectedTab, currentAccountStorageKey, accessibility.reduceMotion)
     val reminderRequest = com.tyust.course.schedule.CourseReminderNavigation.requestedId
     LaunchedEffect(reminderRequest, currentAccountStorageKey) {
@@ -265,13 +287,6 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
     val dialogHostState = key(currentAccountStorageKey) { rememberDialogHostState() }
     val density = LocalDensity.current
     val pageTravelPx = with(density) { 8.dp.roundToPx() }
-    val items = remember { listOf(
-        BottomNavItem.Courses,
-        BottomNavItem.Schedule,
-        BottomNavItem.Grab,
-        BottomNavItem.Grades,
-        BottomNavItem.Settings
-    ) }
     val updateState = rememberUpdateState()
     val recovery by SessionRenewer.state.collectAsState()
     val isTokenExpired = session.expired && recovery.token == session.token && recovery.phase == RecoveryPhase.NeedsLogin
@@ -301,6 +316,9 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
         }
         fragmentActivity.lifecycle.addObserver(observer)
         onDispose { fragmentActivity.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(surveyRepository, foreground, surveyVisit) {
+        if (foreground) surveyRepository.refresh()
     }
     LaunchedEffect(session, isTokenExpired, foreground, dialogHostState.hasBlockingSurface) {
         noticeModel.notices.update(session, isTokenExpired, foreground && !dialogHostState.hasBlockingSurface)
@@ -552,7 +570,10 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
                                     1 -> com.tyust.course.ui.route.ScheduleRoute()
                                     2 -> com.tyust.course.ui.route.GrabProRoute()
                                     3 -> com.tyust.course.ui.route.GradesRoute()
-                                    4 -> com.tyust.course.ui.route.SettingsRoute()
+                                    4 -> com.tyust.course.ui.route.SettingsRoute(
+                                        onSurveyCenter = { initialSurveyId = null; showSurveyCenter = true },
+                                        surveyUnreadCount = surveyFeed.unreadCount(System.currentTimeMillis())
+                                    )
                                     else -> com.tyust.course.ui.route.CourseListRoute()
                                 }
                               }
@@ -597,6 +618,22 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
             DialogHost(
                 state = dialogHostState,
                 modifier = Modifier.fillMaxSize()
+            )
+            if (showSurveyCenter) {
+                key(currentAccountStorageKey) {
+                    com.tyust.course.ui.system.GlassSubpage(onDismiss = { showSurveyCenter = false; initialSurveyId = null }) { close ->
+                        com.tyust.course.ui.route.SurveyCenterRoute(surveyRepository, onBack = close, initialSurveyId = initialSurveyId)
+                    }
+                }
+            }
+            com.tyust.course.ui.screen.SurveyReminder(
+                repository = surveyRepository,
+                canPresent = startupOverlaysReady && !session.expired && !showStarDialog && !updateState.showDialog() &&
+                    !dialogHostState.hasBlockingSurface && !showSurveyCenter && selectedTab != 2 &&
+                    (surveyUsagePreferences.noticeSeen || isDemoMode),
+                foreground = foreground,
+                onOpen = { id -> initialSurveyId = id; showSurveyCenter = true },
+                modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 20.dp).padding(bottom = navBarContentInset + 12.dp)
             )
 
             if (!session.expired && updateState.showDialog() && updateInfo != null) {

@@ -12,6 +12,12 @@ object AcademicGatewayFactory {
         return school.academicSystem != AcademicSystem.LEGACY_ZF.id
     }
 
+    /** Auto-detection opts into this flow but cannot create an adapter yet. */
+    fun hasSelectedAdapter(school: SchoolConfig): Boolean = when (AcademicSystem.fromId(school.academicSystem)) {
+        AcademicSystem.ZF, AcademicSystem.ZF_OLD, AcademicSystem.QZ, AcademicSystem.QZ_OLD -> true
+        else -> false
+    }
+
     suspend fun detect(school: SchoolConfig, accountStorageKey: String): AcademicSystem? {
         val originalPath = school.basePath
         val normalized = AcademicAddress.parse(school.fullBasePath)?.basePath ?: originalPath
@@ -60,7 +66,7 @@ object AcademicGatewayFactory {
         sessions.invalidate(school.id, accountStorageKey)
     }
 
-    /** Import a Cookie header produced by the restricted WebView into the adapter jar. */
+    /** Import the configured school's Cookie header from the login browser. */
     fun importCookie(school: SchoolConfig, accountStorageKey: String, header: String, replace: Boolean = true, username: String = "") {
         val session = if (replace) sessions.replace(school.id, accountStorageKey, school.fullBasePath)
             else sessions.session(school.id, accountStorageKey, school.fullBasePath)
@@ -88,9 +94,9 @@ object AcademicGatewayFactory {
         val path = when (AcademicSystem.fromId(school.academicSystem)) {
             AcademicSystem.ZF -> if (configured.isNotBlank() && configured != "/xtgl/login_slogin.html") configured.trimStart('/') else "xtgl/login_slogin.html"
             AcademicSystem.ZF_OLD -> if (configured.isNotBlank() && configured != "/xtgl/login_slogin.html") configured.trimStart('/') else "default2.aspx"
-            AcademicSystem.QZ -> if (configured.isNotBlank() && configured != "/xtgl/login_slogin.html") configured.trimStart('/') else "framework/xsMainV.htmlx"
-            // LoginToXk is often a POST-only handler; the root serves the captcha form.
-            AcademicSystem.QZ_OLD -> if (configured.isNotBlank() && configured != "/xtgl/login_slogin.html") configured.trimStart('/') else ""
+            // Protected framework pages can return an AJAX "not logged in" JSON
+            // response to WebView's X-Requested-With header. The root is public.
+            AcademicSystem.QZ, AcademicSystem.QZ_OLD -> if (configured.isNotBlank() && configured != "/xtgl/login_slogin.html") configured.trimStart('/') else ""
             else -> if (configured.isNotBlank()) configured.trimStart('/') else ""
         }
         return school.fullBasePath.trimEnd('/') + "/" + path
