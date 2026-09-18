@@ -15,6 +15,10 @@ import androidx.compose.runtime.setValue
 class ScheduleSettingsManager internal constructor(private var prefs: SharedPreferences? = null) {
     var revision by mutableIntStateOf(0)
         private set
+
+    fun invalidateRevision() {
+        revision++
+    }
     
     companion object {
         private const val PREFS_NAME = "schedule_settings"
@@ -82,10 +86,30 @@ class ScheduleSettingsManager internal constructor(private var prefs: SharedPref
     
     // ============ 节次数量 ============
     
+    fun defaultPeriodCount(): Int = if (isShufeZj()) 13 else 12
+
     var periodCount: Int
-        get() = getScopedInt(KEY_PERIOD_COUNT, 12)
+        get() {
+            val defaultCount = defaultPeriodCount()
+            val p = prefs
+            val scoped = scopedKey(KEY_PERIOD_COUNT)
+            val hasExplicit = p?.contains(scoped) == true || p?.contains(KEY_PERIOD_COUNT) == true
+            if (!hasExplicit) {
+                return defaultCount
+            }
+            val count = getScopedInt(KEY_PERIOD_COUNT, defaultCount)
+            if (isShufeZj() && count == 12 && p?.getBoolean("${scoped}_shufe_migrated", false) != true) {
+                p?.edit()?.putInt(scoped, 13)?.putBoolean("${scoped}_shufe_migrated", true)?.apply()
+                return 13
+            }
+            return count
+        }
         set(value) {
-            prefs?.edit()?.putInt(scopedKey(KEY_PERIOD_COUNT), value)?.remove(KEY_PERIOD_COUNT)?.apply()
+            prefs?.edit()
+                ?.putInt(scopedKey(KEY_PERIOD_COUNT), value)
+                ?.putBoolean("${scopedKey(KEY_PERIOD_COUNT)}_shufe_migrated", true)
+                ?.remove(KEY_PERIOD_COUNT)
+                ?.apply()
             revision++
         }
     
@@ -140,6 +164,52 @@ class ScheduleSettingsManager internal constructor(private var prefs: SharedPref
         val endTime: String
     )
     
+    fun isShufeZj(): Boolean {
+        val school = runCatching { UserManager.getInstance().currentSchool }.getOrNull()
+        if (school != null && (school.id == "shufe-zj" ||
+                school.domain.contains("shufe-zj.edu.cn", ignoreCase = true) ||
+                school.name.contains("上海财经大学浙江学院"))) {
+            return true
+        }
+        val accountKey = accountStorageKey()
+        if (accountKey.startsWith("shufe-zj", ignoreCase = true) || accountKey.contains("shufe_zj", ignoreCase = true)) {
+            return true
+        }
+        return false
+    }
+
+    fun getShufeZjPeriodTimes(): List<PeriodTime> {
+        return listOf(
+            PeriodTime(1, "08:00", "08:40"),
+            PeriodTime(2, "08:50", "09:30"),
+            PeriodTime(3, "09:40", "10:20"),
+            PeriodTime(4, "10:30", "11:10"),
+            PeriodTime(5, "11:20", "12:00"),
+            PeriodTime(6, "14:00", "14:40"),
+            PeriodTime(7, "14:50", "15:30"),
+            PeriodTime(8, "15:40", "16:20"),
+            PeriodTime(9, "16:30", "17:10"),
+            PeriodTime(10, "18:30", "19:10"),
+            PeriodTime(11, "19:20", "20:00"),
+            PeriodTime(12, "20:10", "20:50"),
+            PeriodTime(13, "21:00", "21:40")
+        )
+    }
+
+    fun isLegacyStandardTimes(list: List<PeriodTime>): Boolean {
+        if (list.size == 12 && list.firstOrNull()?.endTime == "08:45" && list.getOrNull(1)?.startTime == "08:55") {
+            return true
+        }
+        return false
+    }
+
+    fun isLegacyDefaultTimes(starts: Map<Int, String>?, ends: Map<Int, String>?): Boolean {
+        if (ends?.get(1) == "08:45" && starts?.get(2) == "08:55") {
+            return true
+        }
+        return false
+    }
+
     fun getPeriodTimes(): List<PeriodTime> {
         val json = getScopedString(KEY_PERIOD_TIMES)
         if (json != null) {
@@ -153,6 +223,9 @@ class ScheduleSettingsManager internal constructor(private var prefs: SharedPref
                         startTime = obj.getString("start"),
                         endTime = obj.getString("end")
                     ))
+                }
+                if (isShufeZj() && isLegacyStandardTimes(list)) {
+                    return getShufeZjPeriodTimes().also { savePeriodTimes(it) }
                 }
                 return list
             } catch (e: Exception) {
@@ -178,6 +251,9 @@ class ScheduleSettingsManager internal constructor(private var prefs: SharedPref
     }
     
     fun getDefaultPeriodTimes(): List<PeriodTime> {
+        if (isShufeZj()) {
+            return getShufeZjPeriodTimes()
+        }
         return listOf(
             PeriodTime(1, "08:00", "08:45"),
             PeriodTime(2, "08:55", "09:40"),

@@ -162,8 +162,14 @@ fun ScheduleRoute() {
     val settingsTerm = settingsTermOverride ?: resolvedTermId
     val termTimeBase = remember(settingsTerm, remindersRevision) { reminderScheduler.timeBase(routeAccountKey, settingsTerm) }
     val displayedTimeBase = remember(resolvedTermId, remindersRevision) { reminderScheduler.timeBase(routeAccountKey, resolvedTermId) }
-    fun periodTimesFor(base: ScheduleTimeBase?): List<ScheduleSettingsManager.PeriodTime> = settingsManager.getPeriodTimes().map {
-        it.copy(startTime = base?.periodStarts?.get(it.period) ?: it.startTime, endTime = base?.periodEnds?.get(it.period) ?: it.endTime)
+    fun periodTimesFor(base: ScheduleTimeBase?): List<ScheduleSettingsManager.PeriodTime> {
+        val defaultList = settingsManager.getPeriodTimes()
+        if (settingsManager.isShufeZj() && settingsManager.isLegacyDefaultTimes(base?.periodStarts, base?.periodEnds)) {
+            return defaultList
+        }
+        return defaultList.map {
+            it.copy(startTime = base?.periodStarts?.get(it.period) ?: it.startTime, endTime = base?.periodEnds?.get(it.period) ?: it.endTime)
+        }
     }
     val focusRegistry = remember { com.tyust.course.ui.screen.ScheduleFocusRegistry() }
     val reminderRequest = CourseReminderNavigation.requestedId

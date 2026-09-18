@@ -30,7 +30,8 @@ object AcademicUrlPolicy {
             val clean = configured.trim().removePrefix("http://").removePrefix("https://").substringBefore('/')
             if (clean.isBlank()) return@any false
             val allowedPort = clean.substringAfter(':', "").toIntOrNull()
-            if (allowedPort != null && port != allowedPort) return@any false
+                ?: if (uri.scheme == "https") 443 else 80
+            if (port != allowedPort) return@any false
 
             val targetHost = clean.substringBefore(':').lowercase()
             when {

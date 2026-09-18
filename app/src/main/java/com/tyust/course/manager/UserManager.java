@@ -131,6 +131,9 @@ public class UserManager {
     public void setCurrentSchool(SchoolConfig school) {
         this.currentSchool = school;
         saveLoginState(); // 保存学校选择
+        try {
+            com.tyust.course.manager.ScheduleSettingsManager.Companion.getInstance().invalidateRevision();
+        } catch (Throwable ignored) {}
     }
 
     public SchoolConfig getCurrentSchool() {
