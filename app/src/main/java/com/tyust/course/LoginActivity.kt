@@ -73,6 +73,7 @@ class LoginActivity : ComponentActivity() {
     private var pendingPasswordUsername = ""
     private var pendingPasswordValue = ""
     private var captchaImageBytes by mutableStateOf<ByteArray?>(null)
+    private var autoWebViewLaunched = false
 
     // WebView result launcher
     private val webViewLauncher = registerForActivityResult(
@@ -83,7 +84,8 @@ class LoginActivity : ComponentActivity() {
             if (!cookie.isNullOrBlank()) {
                 cookieFromWebView = cookie
                 academicWebPageUrl = result.data?.getStringExtra(AcademicWebViewActivity.EXTRA_PAGE_URL).orEmpty()
-                Toast.makeText(this, "Cookie 已获取，点击登录", Toast.LENGTH_SHORT).show()
+                // 网页端获取到新 Cookie 后自动发起校验并完成登录，无需用户额外点击“点击登录”
+                handleLogin(cookie)
             }
         }
     }
@@ -111,6 +113,11 @@ class LoginActivity : ComponentActivity() {
             val forceRelogin = intent.getBooleanExtra("force_relogin", false)
             if (forceRelogin) {
                 errorMessage = "请重新登录以继续使用"
+                val userManager = UserManager.getInstance()
+                if (!autoWebViewLaunched && userManager.currentSchool != null && "cookie" == userManager.loginMode) {
+                    autoWebViewLaunched = true
+                    openWebView()
+                }
             } else {
                 // 检查是否有保存的有效登录状态
                 checkSavedLoginState()

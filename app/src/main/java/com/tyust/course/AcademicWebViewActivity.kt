@@ -21,6 +21,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material3.LinearProgressIndicator
@@ -106,6 +107,13 @@ class AcademicWebViewActivity : ComponentActivity() {
                     actions = {
                         SystemIconButton(Icons.Default.School, "教务入口", { browser.loadUrl(startUrl) })
                         SystemIconButton(Icons.Default.Refresh, "刷新网页", { browser.reload() })
+                        SystemIconButton(Icons.Default.Delete, "清空重登", {
+                            CookieManager.getInstance().removeAllCookies {
+                                CookieManager.getInstance().flush()
+                                Toast.makeText(this@AcademicWebViewActivity, "已清除免密登录态，请重新输入账号密码", Toast.LENGTH_SHORT).show()
+                                browser.loadUrl(startUrl.ifBlank { initialUrl })
+                            }
+                        })
                     }
                 ) { padding ->
                     Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 12.dp)) {
@@ -130,20 +138,8 @@ class AcademicWebViewActivity : ComponentActivity() {
                 }
             }
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            CookieManager.getInstance().removeAllCookies { browser.loadUrl(initialUrl) }
-        } else {
-            // Before API 28 WebView has no per-process storage suffix. Clear only
-            // the configured school cookies instead of unrelated browser sessions.
-            for (host in allowedHosts) {
-                val url = Uri.parse(startUrl).scheme + "://" + host + "/"
-                CookieManager.getInstance().getCookie(url).orEmpty().split(';').forEach { part ->
-                    val name = part.substringBefore('=').trim()
-                    if (name.isNotEmpty()) CookieManager.getInstance().setCookie(url, name + "=; Max-Age=0; Path=/")
-                }
-            }
-            browser.loadUrl(initialUrl)
-        }
+        // 保留 SSO 免密登录凭据（如 CAS TGC / session），实现下次秒级自动换票续期；若需清空可点击右上角“清空重登”
+        browser.loadUrl(initialUrl)
     }
 
     @SuppressLint("SetJavaScriptEnabled")
